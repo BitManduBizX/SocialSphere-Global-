@@ -102,15 +102,17 @@ Click one of the suggested prompts below or ask any custom research question!`,
 
     setMessages((prev) => [...prev, initialBotMessage]);
 
+    const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
     const customKey = sessionStorage.getItem('socialsphere_custom_api_key') || localStorage.getItem('socialsphere_custom_api_key') || '';
+    const effectiveApiKey = customKey || envKey;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (customKey) {
-      headers['x-gemini-api-key'] = customKey;
+    if (effectiveApiKey) {
+      headers['x-gemini-api-key'] = effectiveApiKey;
     }
 
     try {
       // First attempt streaming from server-side endpoint
-      const response = await fetch('/api/gemini/stream', {
+      let response = await fetch('/api/gemini/stream', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -120,51 +122,84 @@ You provide deep, technically rigorous, highly structured, and empirical insight
 Format with clean markdown, bullet points, and code/architecture snippets where relevant. Avoid generic filler.`,
           model: 'gemini-2.5-flash',
         }),
-      });
+      }).catch(() => null);
 
-      if (!response.ok || !response.body) {
-        throw new Error(`Server returned HTTP ${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
       let accumulated = '';
       let streamFailed = false;
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
+      if (response && response.ok && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6).trim();
-            if (dataStr === '[DONE]' || dataStr === '{"done":true}') {
-              break;
-            }
-            try {
-              const parsed = JSON.parse(dataStr);
-              if (parsed.error) {
-                streamFailed = true;
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.slice(6).trim();
+              if (dataStr === '[DONE]' || dataStr === '{"done":true}') {
                 break;
               }
-              if (parsed.text) {
-                accumulated += parsed.text;
-                setMessages((prev) =>
-                  prev.map((m) => (m.id === botMessageId ? { ...m, content: accumulated } : m))
-                );
+              try {
+                const parsed = JSON.parse(dataStr);
+                if (parsed.error) {
+                  streamFailed = true;
+                  break;
+                }
+                if (parsed.text) {
+                  accumulated += parsed.text;
+                  setMessages((prev) =>
+                    prev.map((m) => (m.id === botMessageId ? { ...m, content: accumulated } : m))
+                  );
+                }
+              } catch {
+                // ignore json parse splits
               }
-            } catch {
-              // ignore json parse splits
             }
           }
+          if (streamFailed) break;
         }
-        if (streamFailed) break;
+      } else {
+        streamFailed = true;
       }
 
-      if (!accumulated || streamFailed) {
+      // If server streaming route failed (e.g., static hosting) and we have an API key, call Google REST API directly
+      if ((!accumulated || streamFailed) && effectiveApiKey) {
+        try {
+          const directRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${effectiveApiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+              }),
+            }
+          );
+          if (directRes.ok) {
+            const data = await directRes.json();
+            const directText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (directText) {
+              accumulated = directText;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === botMessageId
+                    ? { ...m, content: accumulated, source: 'gemini-live' }
+                    : m
+                )
+              );
+            }
+          }
+        } catch (directErr) {
+          console.warn('Direct Gemini REST fallback also failed:', directErr);
+        }
+      }
+
+      if (!accumulated) {
         throw new Error('Streaming failed or returned empty payload.');
       }
     } catch (err) {

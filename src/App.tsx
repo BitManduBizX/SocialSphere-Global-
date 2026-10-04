@@ -23,10 +23,12 @@ export default function App() {
   const [hasConsent, setHasConsent] = useState<boolean>(false);
 
   useEffect(() => {
-    // Check if custom key is in session/local storage
+    // Check if custom key or VITE_GEMINI_API_KEY environment variable is present
+    const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
     const customKey =
       sessionStorage.getItem('socialsphere_custom_api_key') ||
-      localStorage.getItem('socialsphere_custom_api_key');
+      localStorage.getItem('socialsphere_custom_api_key') ||
+      envKey;
     setHasCustomKey(Boolean(customKey));
 
     // Check privacy consent status

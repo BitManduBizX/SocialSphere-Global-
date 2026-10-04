@@ -23,13 +23,19 @@ export const ApiSetupModal: React.FC<ApiSetupModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       checkServerKeyStatus();
-      const localKey = sessionStorage.getItem('socialsphere_custom_api_key') || localStorage.getItem('socialsphere_custom_api_key') || '';
+      const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
+      const localKey = sessionStorage.getItem('socialsphere_custom_api_key') || localStorage.getItem('socialsphere_custom_api_key') || envKey || '';
       setApiKeyInput(localKey);
     }
   }, [isOpen]);
 
   const checkServerKeyStatus = async () => {
     setServerStatus('checking');
+    const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
+    if (envKey) {
+      setServerStatus('configured');
+      return;
+    }
     try {
       const res = await fetch('/api/status');
       if (res.ok) {
@@ -59,7 +65,8 @@ export const ApiSetupModal: React.FC<ApiSetupModalProps> = ({
 
   const handleTestKey = async () => {
     setTestResult({ status: 'testing', message: 'Verifying with Gemini model...' });
-    const keyToTest = apiKeyInput.trim();
+    const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
+    const keyToTest = apiKeyInput.trim() || envKey;
 
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -67,28 +74,60 @@ export const ApiSetupModal: React.FC<ApiSetupModalProps> = ({
         headers['x-gemini-api-key'] = keyToTest;
       }
 
-      const res = await fetch('/api/gemini/generate', {
+      let res = await fetch('/api/gemini/generate', {
         method: 'POST',
         headers,
         body: JSON.stringify({
           prompt: 'Respond with the single word: "Operational"',
           model: 'gemini-2.5-flash',
         }),
-      });
+      }).catch(() => null);
 
-      if (res.ok) {
+      if (res && res.ok) {
         const data = await res.json();
         setTestResult({
           status: 'success',
           message: `API Verified Successfully! Response: "${data.text?.trim()}"`,
         });
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        setTestResult({
-          status: 'error',
-          message: errData.details || errData.error || 'Connection failed. Please check the API key.',
-        });
+        return;
       }
+
+      // If backend route returned error or failed (e.g., static hosting), test direct Google REST API
+      if (keyToTest) {
+        const directRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${keyToTest}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: 'Respond with the single word: "Operational"' }] }],
+            }),
+          }
+        );
+
+        if (directRes.ok) {
+          const directData = await directRes.json();
+          const reply = directData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'Operational';
+          setTestResult({
+            status: 'success',
+            message: `API Key Verified Directly! Response: "${reply}"`,
+          });
+          return;
+        } else {
+          const directErr = await directRes.json().catch(() => ({}));
+          setTestResult({
+            status: 'error',
+            message: directErr.error?.message || 'Direct API authentication failed. Please check key validity.',
+          });
+          return;
+        }
+      }
+
+      const errData = res ? await res.json().catch(() => ({})) : {};
+      setTestResult({
+        status: 'error',
+        message: errData.details || errData.error || 'Connection failed. Please provide a valid Gemini API key.',
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setTestResult({

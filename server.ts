@@ -23,7 +23,8 @@ async function startServer() {
 
   // API Status check
   app.get('/api/status', (_req: Request, res: Response) => {
-    const hasServerApiKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.length > 5);
+    const serverKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+    const hasServerApiKey = Boolean(serverKey && serverKey.length > 5);
     res.json({
       status: 'operational',
       hasApiKey: hasServerApiKey,
@@ -36,7 +37,7 @@ async function startServer() {
     try {
       const { prompt, systemInstruction, model: requestedModel } = req.body;
       const clientApiKey = req.headers['x-gemini-api-key'] as string;
-      const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
+      const apiKey = clientApiKey || process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
 
       if (!apiKey) {
         return res.status(401).json({
@@ -97,7 +98,7 @@ async function startServer() {
     try {
       const { prompt, systemInstruction, model: requestedModel } = req.body;
       const clientApiKey = req.headers['x-gemini-api-key'] as string;
-      const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
+      const apiKey = clientApiKey || process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
 
       if (!apiKey) {
         return res.status(401).json({
