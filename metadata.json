@@ -1,0 +1,6 @@
+{
+  "name": "SocialSphere",
+  "description": "Unified global social media intelligence and learning ecosystem covering platform telemetry, distributed data architecture, posting strategy heatmaps, digital marketing career navigation, and Gemini AI copilot.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
